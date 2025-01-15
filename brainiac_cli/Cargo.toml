@@ -1,0 +1,12 @@
+[package]
+name = "brainiac_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.26", features = ["derive"] }
+colored = "3.0.0"
+tokio = { version = "1.43.0", features = ["full"] }
+
+[dependencies.brainiac]
+path = "../brainiac"
