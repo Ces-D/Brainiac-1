@@ -9,13 +9,16 @@ use ollama::{
 };
 use slugify_rs::slugify;
 
+pub mod error;
+mod factory;
 pub mod model;
 mod ollama;
 
-fn render_metadata_matter(metadata: &Metadata) -> String {
-    toml::to_string_pretty(metadata).unwrap()
+fn generate_article_matter(metadata: &Metadata) -> String {
+    let matter = gray_matter::Matter::<gray_matter::engine::TOML>::new();
+    let t = toml::to_string_pretty(metadata).unwrap();
+    format!("{}\n{}\n{}\n", matter.delimiter, t, matter.delimiter)
 }
-
 fn parse_article_matter(content: &str) -> Option<gray_matter::ParsedEntityStruct<Metadata>> {
     let matter = gray_matter::Matter::<gray_matter::engine::TOML>::new();
     matter.parse_with_struct::<Metadata>(content)
@@ -53,23 +56,23 @@ pub struct BrainiacAppend {
 /// - Generates metadata fields based on the model and path content
 /// - Writes the file to `output_path` or std out
 pub async fn append_metadata(params: BrainiacAppend) -> std::io::Result<Metadata> {
-    let content = std::fs::read_to_string(params.source_path).unwrap();
+    let article_content = std::fs::read_to_string(params.source_path).unwrap();
     let instance = create_ollama_instance();
     let model = params.model.unwrap_or_default();
     if model_is_available(&instance, &model).await {
-        let summary = generate_article_summary(&instance, &model, &content)
+        let summary = generate_article_summary(&instance, model.clone(), &article_content)
             .await
             .unwrap();
-        let title = generate_article_title(&instance, &model, &content)
+        let title = generate_article_title(&instance, model.clone(), &summary)
             .await
             .unwrap();
-        let keywords = generate_article_keywords(&instance, &model, &content)
+        let keywords = generate_article_keywords(&instance, model.clone(), &article_content)
             .await
             .unwrap();
-        let genre = generate_article_genre(&instance, &model, &content)
+        let genre = generate_article_genre(&instance, model, &article_content)
             .await
             .unwrap();
-        let analytics = get_analytics_data(&content);
+        let analytics = get_analytics_data(&article_content);
         let metadata = Metadata {
             title: title.clone(),
             description: summary,
@@ -86,20 +89,20 @@ pub async fn append_metadata(params: BrainiacAppend) -> std::io::Result<Metadata
                 ..Default::default()
             },
         };
-        let rendered_metadata = render_metadata_matter(&metadata);
+        let rendered_metadata = generate_article_matter(&metadata);
         println!("{}", rendered_metadata);
         if params.output_dir_path.is_some() {
             let output_dir_path = params.output_dir_path.unwrap();
             let output_path =
                 Path::new(&output_dir_path).join(create_output_file_name(&metadata.slug));
             let mut file = std::fs::File::create_new(output_path).unwrap();
-            let buffered_content = format!("{}\n\n{}", rendered_metadata, content);
+            let buffered_content = format!("{}\n{}", rendered_metadata, article_content);
             let _ = file.write(buffered_content.as_bytes())?;
             Ok(metadata)
         } else {
             let file_name = create_output_file_name(&metadata.slug);
             let mut file = std::fs::File::create_new(Path::new(&file_name)).unwrap();
-            let buffered_content = format!("{}\n\n{}", rendered_metadata, content);
+            let buffered_content = format!("{}\n\n{}", rendered_metadata, article_content);
             let _ = file.write(buffered_content.as_bytes())?;
             Ok(metadata)
         }

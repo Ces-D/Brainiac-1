@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, strum::Display, strum::EnumIter, strum::EnumString, Serialize, Deserialize)]
+#[derive(
+    Default,
+    strum::Display,
+    strum::EnumIter,
+    strum::EnumString,
+    strum::VariantArray,
+    Serialize,
+    Deserialize,
+)]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum ArticleGenre {
     News,
@@ -21,7 +29,7 @@ pub enum ArticleGenre {
     Art,
 }
 
-#[derive(Default, strum::Display, strum::EnumString, Clone, Copy)]
+#[derive(Default, strum::Display, strum::EnumString, Clone)]
 pub enum SupportedModel {
     /// Llama 3 instruction-tuned models are fine-tuned and optimized for dialogue/chat use cases and outperform many of the available open-source chat models on common benchmarks.
     #[strum(serialize = "llama3")]
