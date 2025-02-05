@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use brainiac::model::SupportedModel;
 use clap::{builder::NonEmptyStringValueParser, value_parser, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -19,8 +18,18 @@ pub enum Commands {
         source_path: PathBuf,
         #[arg(short, long, help = "The path to the OUTPUT directory", required = true, value_parser=value_parser!(PathBuf))]
         output_dir_path: Option<PathBuf>,
-        #[arg(short, long, help = "The name of the model to use")]
-        model: Option<SupportedModel>,
+        #[arg(
+            short,
+            long,
+            help = "The name of the model used for generating metadata"
+        )]
+        gen_model: Option<String>,
+        #[arg(
+            short,
+            long,
+            help = "The name of the model used for formatting model responses"
+        )]
+        format_model: Option<String>,
         #[arg(short,long, help="The name of the file author", required=true, value_parser=NonEmptyStringValueParser::new())]
         author: String,
     },

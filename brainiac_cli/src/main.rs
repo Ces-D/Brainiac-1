@@ -8,19 +8,24 @@ mod cli;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let mut builder = colog::default_builder();
+    builder.filter_level(log::LevelFilter::Trace);
+    builder.init();
     let app = Cli::parse();
 
     match app.command {
         Commands::Generate {
             source_path,
             output_dir_path,
-            model,
+            gen_model,
+            format_model,
             author,
         } => {
             let params = BrainiacAppend {
                 source_path,
                 output_dir_path,
-                model,
+                gen_model,
+                format_model,
                 author,
             };
             match append_metadata(params).await {
@@ -37,7 +42,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     )?;
                     Ok(())
                 }
-                Err(_) => todo!(),
+                Err(error) => {
+                    let stderr = std::io::stderr(); // get the global stderr entity
+                    let mut handle = stderr.lock(); // acquire a lock on it
+                    writeln!(handle, "{}", error.to_string().red())?;
+                    Ok(())
+                }
             }
         }
     }

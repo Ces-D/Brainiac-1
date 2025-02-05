@@ -1,16 +1,14 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
+use error::BrainiacError;
 use gray_matter::ParsedEntityStruct;
-use model::{AnalyticsMetadata, InterestMetadata, Metadata};
-use ollama::{
-    generate_article_genre, generate_article_keywords, generate_article_summary,
-    generate_article_title, model_is_available,
-};
+use model::{AnalyticsMetadata, ArticleGenre, InterestMetadata, Metadata, ResponseOutputType};
+use ollama_rs::Ollama;
 use slugify_rs::slugify;
 
 pub mod error;
-mod factory;
 pub mod model;
 mod ollama;
 
@@ -22,6 +20,9 @@ fn generate_article_matter(metadata: &Metadata) -> String {
 fn parse_article_matter(content: &str) -> Option<gray_matter::ParsedEntityStruct<Metadata>> {
     let matter = gray_matter::Matter::<gray_matter::engine::TOML>::new();
     matter.parse_with_struct::<Metadata>(content)
+}
+fn sanitize_string(input: String) -> String {
+    input.replace("\n", "").replace("\r", "").replace("\t", "")
 }
 
 struct AnalyticsData {
@@ -36,9 +37,7 @@ fn get_analytics_data(content: &str) -> AnalyticsData {
         length_in_words: reading_time.word_count(),
     }
 }
-fn create_ollama_instance() -> ollama_rs::Ollama {
-    ollama_rs::Ollama::default()
-}
+
 pub fn create_output_file_name(slug: &String) -> PathBuf {
     let file_name = format!("{}.md", slug);
     Path::new(&file_name).to_path_buf()
@@ -47,7 +46,8 @@ pub fn create_output_file_name(slug: &String) -> PathBuf {
 pub struct BrainiacAppend {
     pub source_path: PathBuf,
     pub output_dir_path: Option<PathBuf>,
-    pub model: Option<model::SupportedModel>,
+    pub gen_model: Option<String>,
+    pub format_model: Option<String>,
     pub author: String,
 }
 /// Append metadata to a file.
@@ -55,59 +55,88 @@ pub struct BrainiacAppend {
 /// - Reads the file at `source_path`
 /// - Generates metadata fields based on the model and path content
 /// - Writes the file to `output_path` or std out
-pub async fn append_metadata(params: BrainiacAppend) -> std::io::Result<Metadata> {
+pub async fn append_metadata(params: BrainiacAppend) -> Result<Metadata, BrainiacError> {
     let article_content = std::fs::read_to_string(params.source_path).unwrap();
-    let instance = create_ollama_instance();
-    let model = params.model.unwrap_or_default();
-    if model_is_available(&instance, &model).await {
-        let summary = generate_article_summary(&instance, model.clone(), &article_content)
-            .await
-            .unwrap();
-        let title = generate_article_title(&instance, model.clone(), &summary)
-            .await
-            .unwrap();
-        let keywords = generate_article_keywords(&instance, model.clone(), &article_content)
-            .await
-            .unwrap();
-        let genre = generate_article_genre(&instance, model, &article_content)
-            .await
-            .unwrap();
-        let analytics = get_analytics_data(&article_content);
-        let metadata = Metadata {
-            title: title.clone(),
-            description: summary,
-            author: params.author,
-            slug: slugify!(title.as_str()),
-            analytics: AnalyticsMetadata {
-                reading_time_in_minutes: analytics.reading_time_in_minutes,
-                length_in_words: analytics.length_in_words,
-                ..Default::default()
-            },
-            interest: InterestMetadata {
-                keywords,
-                genre,
-                ..Default::default()
-            },
-        };
-        let rendered_metadata = generate_article_matter(&metadata);
-        println!("{}", rendered_metadata);
-        if params.output_dir_path.is_some() {
-            let output_dir_path = params.output_dir_path.unwrap();
-            let output_path =
-                Path::new(&output_dir_path).join(create_output_file_name(&metadata.slug));
-            let mut file = std::fs::File::create_new(output_path).unwrap();
-            let buffered_content = format!("{}\n{}", rendered_metadata, article_content);
-            let _ = file.write(buffered_content.as_bytes())?;
-            Ok(metadata)
-        } else {
-            let file_name = create_output_file_name(&metadata.slug);
-            let mut file = std::fs::File::create_new(Path::new(&file_name)).unwrap();
-            let buffered_content = format!("{}\n\n{}", rendered_metadata, article_content);
-            let _ = file.write(buffered_content.as_bytes())?;
-            Ok(metadata)
-        }
+    let instance = Ollama::default();
+    let mut generator = ollama::generator::OutputGenerator::new(
+        &instance,
+        params.gen_model.unwrap_or("deepseek-r1:8b".to_string()),
+    );
+    generator.set_content(article_content.clone());
+    let formatter = ollama::formatter::OutputFormatter::new(
+        &instance,
+        params
+            .format_model
+            .unwrap_or("deepseek-r1:1.5b".to_string()),
+    );
+
+    let title = generator.generate_output(ResponseOutputType::Title).await?;
+    log::trace!("Unproccessed Title: {}\n", title.response);
+    let title = formatter
+        .format_output(sanitize_string(title.response), ResponseOutputType::Title)
+        .await?;
+    log::info!("Title: {}", title.response);
+    let description = generator
+        .generate_output(ResponseOutputType::Description)
+        .await?;
+    log::trace!("Unproccessed Description: {}\n", description.response);
+    let description = formatter
+        .format_output(
+            sanitize_string(description.response),
+            ResponseOutputType::Description,
+        )
+        .await?;
+    log::info!("Description: {}", description.response);
+    let genre = generator.generate_output(ResponseOutputType::Genre).await?;
+    log::trace!("Unproccessed Genre: {}", genre.response);
+    let genre = formatter
+        .format_output(sanitize_string(genre.response), ResponseOutputType::Genre)
+        .await?;
+    log::info!("Genre: {}", genre.response);
+    let keywords = generator
+        .generate_output(ResponseOutputType::Keywords)
+        .await?;
+    log::trace!("Unproccessed Keywords: {}", keywords.response);
+    let keywords = formatter
+        .format_output(
+            sanitize_string(keywords.response),
+            ResponseOutputType::Keywords,
+        )
+        .await?;
+    log::info!("Keywords: {}", keywords.response);
+
+    let analytics = get_analytics_data(&article_content);
+    let metadata = Metadata {
+        title: title.response.clone(),
+        description: description.response,
+        author: params.author,
+        slug: slugify!(title.response.as_str()),
+        analytics: AnalyticsMetadata {
+            reading_time_in_minutes: analytics.reading_time_in_minutes,
+            length_in_words: analytics.length_in_words,
+            ..Default::default()
+        },
+        interest: InterestMetadata {
+            keywords: vec![keywords.response],
+            genre: ArticleGenre::from_str(genre.response.as_str()).unwrap_or_default(),
+            ..Default::default()
+        },
+    };
+    let rendered_metadata = generate_article_matter(&metadata);
+    println!("{}", rendered_metadata);
+    if params.output_dir_path.is_some() {
+        let output_dir_path = params.output_dir_path.unwrap();
+        let output_path = Path::new(&output_dir_path).join(create_output_file_name(&metadata.slug));
+        let mut file = std::fs::File::create_new(output_path).unwrap();
+        let buffered_content = format!("{}\n{}", rendered_metadata, article_content);
+        let _ = file.write(buffered_content.as_bytes())?;
+        Ok(metadata)
     } else {
-        panic!("Model not available: {}", model);
+        let file_name = create_output_file_name(&metadata.slug);
+        let mut file = std::fs::File::create_new(Path::new(&file_name)).unwrap();
+        let buffered_content = format!("{}\n\n{}", rendered_metadata, article_content);
+        let _ = file.write(buffered_content.as_bytes())?;
+        Ok(metadata)
     }
 }
 

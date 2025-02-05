@@ -17,6 +17,13 @@ impl From<Vec<String>> for JSONResponse<Vec<String>> {
         Self { response }
     }
 }
+impl From<&str> for JSONResponse<String> {
+    fn from(response: &str) -> Self {
+        Self {
+            response: response.to_string(),
+        }
+    }
+}
 
 impl Display for JSONResponse<String> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
